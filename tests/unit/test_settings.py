@@ -41,6 +41,13 @@ def test_required_without_default(env: pytest.MonkeyPatch, missing: str) -> None
         Settings()
 
 
+def test_rejects_empty_dsn(env: pytest.MonkeyPatch) -> None:
+    env.setenv("SHOSP_DB_URL", "  ")
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
 def test_rejects_non_positive_batch(env: pytest.MonkeyPatch) -> None:
     env.setenv("BATCH_SIZE_ORGANIZATION", "0")
 

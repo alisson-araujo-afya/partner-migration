@@ -27,7 +27,10 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_jdbc_prefix(cls, value: object) -> object:
         raw = value.get_secret_value() if isinstance(value, SecretStr) else value
-        if isinstance(raw, str) and raw.startswith("jdbc:"):
+        if isinstance(raw, str):
+            raw = raw.strip()
+            if not raw:
+                raise ValueError("SHOSP_DB_URL vazia")
             return raw.removeprefix("jdbc:")
         return value
 
