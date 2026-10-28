@@ -123,14 +123,15 @@ Todas as funções são assíncronas e retornam um resultado tipado. Elas **não
 
 ```python
 class CallOutcome(StrEnum):
-    FOUND = "found"            # GET 200
-    NOT_FOUND = "not_found"    # GET 404
-    CREATED = "created"        # POST 201
+    FOUND = "found"  # GET 200
+    NOT_FOUND = "not_found"  # GET 404
+    CREATED = "created"  # POST 201
     ALREADY_EXISTS = "already_exists"  # POST 409 ou 200 idempotente
-    INVALID = "invalid"        # 400 ou 422
+    INVALID = "invalid"  # 400 ou 422
     DEPENDENCY_MISSING = "dependency_missing"  # 404 no POST
-    TRANSIENT = "transient"    # timeout, conexao, 429, 5xx
-    AUTH = "auth"              # 401 ou 403
+    TRANSIENT = "transient"  # timeout, conexao, 429, 5xx
+    AUTH = "auth"  # 401 ou 403
+
 
 @dataclass(frozen=True)
 class CallResult[T]:
@@ -138,8 +139,8 @@ class CallResult[T]:
     status_code: int | None
     duration_ms: int
     data: T | None
-    error_code: str | None     # codigo do erro do destino, sem valores pessoais
-    error_field: str | None    # campo ou ponteiro do erro
+    error_code: str | None  # codigo do erro do destino, sem valores pessoais
+    error_field: str | None  # campo ou ponteiro do erro
 ```
 
 ### 5.1 `MonorepoPartnerClient` (prescription-backend)

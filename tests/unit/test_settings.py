@@ -31,7 +31,9 @@ def test_loads_from_env(env: pytest.MonkeyPatch) -> None:
     assert settings.include_vaccines is False
 
 
-@pytest.mark.parametrize("missing", ["SHOSP_DB_URL", "BATCH_SIZE_PATIENT", "SOURCE_STATEMENT_TIMEOUT_SECONDS"])
+@pytest.mark.parametrize(
+    "missing", ["SHOSP_DB_URL", "BATCH_SIZE_PATIENT", "SOURCE_STATEMENT_TIMEOUT_SECONDS"]
+)
 def test_required_without_default(env: pytest.MonkeyPatch, missing: str) -> None:
     env.delenv(missing)
 
