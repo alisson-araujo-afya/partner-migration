@@ -1,4 +1,5 @@
--- PRD-03, secao 3.2. Keyset por (cliente_id, prk); min_cliente = after_cliente.
+-- PRD-03, secao 3.2. Keyset por (cliente_id, prk), lido um cliente por vez
+-- (min_cliente = max_cliente = after_cliente).
 with {{wave_cte}},
 wave_patient as (
   select distinct cliente_id, paciente_id from wave_group

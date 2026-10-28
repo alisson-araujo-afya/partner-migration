@@ -1,6 +1,6 @@
 import time
 from collections import defaultdict
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 import asyncpg
@@ -27,6 +27,10 @@ from shosp_migration.source.sql_registry import SqlRegistry, default_registry
 from shosp_migration.source.waves import WaveOrigin, WaveScope
 
 NO_KEY = -1
+MAX_KEY = 2**31 - 1
+CLIENT_LOOKAHEAD = 100
+
+FULL_WAVE = {"min_cliente": NO_KEY, "max_cliente": MAX_KEY, "after_grupo": NO_KEY}
 
 log = structlog.get_logger(__name__)
 
@@ -39,44 +43,31 @@ class SourceReader:
         self._settings = settings
         self._registry = registry or default_registry()
 
-    def organizations(
+    async def organizations(
         self, scope: WaveScope, after: OrgKey | None = None, batch_size: int | None = None
     ) -> AsyncIterator[list[ShospCliente]]:
-        def keyset(last: OrgKey | None) -> dict[str, object]:
-            return {
-                "min_cliente": NO_KEY if last is None else last.prk + 1,
-                "after_grupo": NO_KEY,
-            }
-
-        return self._paginate(
-            "organizations", Entity.ORGANIZATION, scope, after, batch_size, keyset, ShospCliente
-        )
+        size = batch_size or self._settings.batch_size_for(Entity.ORGANIZATION)
+        last = after
+        while True:
+            page = await self._organization_page(scope, last, size)
+            if not page:
+                return
+            yield page
+            if len(page) < size:
+                return
+            last = page[-1].key
 
     def physicians(
         self, scope: WaveScope, after: ClientScopedKey | None = None, batch_size: int | None = None
     ) -> AsyncIterator[list[ShospPrestador]]:
-        return self._paginate(
-            "physicians",
-            Entity.PHYSICIAN,
-            scope,
-            after,
-            batch_size,
-            _client_scoped_keyset,
-            ShospPrestador,
-        )
+        size = batch_size or self._settings.batch_size_for(Entity.PHYSICIAN)
+        return self._client_scoped("physicians", ShospPrestador, scope, after, size)
 
     def patients(
         self, scope: WaveScope, after: ClientScopedKey | None = None, batch_size: int | None = None
     ) -> AsyncIterator[list[ShospPaciente]]:
-        return self._paginate(
-            "patients",
-            Entity.PATIENT,
-            scope,
-            after,
-            batch_size,
-            _client_scoped_keyset,
-            ShospPaciente,
-        )
+        size = batch_size or self._settings.batch_size_for(Entity.PATIENT)
+        return self._client_scoped("patients", ShospPaciente, scope, after, size)
 
     async def prescription_groups(
         self, scope: WaveScope, after: GroupKey | None = None, batch_size: int | None = None
@@ -84,11 +75,11 @@ class SourceReader:
         size = batch_size or self._settings.batch_size_for(Entity.PRESCRIPTION)
         last = after
         while True:
-            params = scope.params() | {
-                "min_cliente": NO_KEY,
-                "after_grupo": NO_KEY if last is None else last.grupo_id,
-                "batch": size,
-            }
+            params = (
+                scope.params()
+                | FULL_WAVE
+                | {"after_grupo": NO_KEY if last is None else last.grupo_id, "batch": size}
+            )
             async with self._pool.readonly() as conn:
                 rows = await self._fetch(conn, "prescription_groups", scope, params)
                 groups = [ShospProntuarioGrupo.model_validate(dict(row)) for row in rows]
@@ -103,7 +94,7 @@ class SourceReader:
             last = groups[-1].key
 
     async def count(self, scope: WaveScope) -> WaveCounts:
-        params = scope.params() | {"min_cliente": NO_KEY, "after_grupo": NO_KEY}
+        params = scope.params() | FULL_WAVE
         async with self._pool.readonly() as conn:
             (row,) = await self._fetch(conn, "counts", scope, params)
             vaccines = None
@@ -112,29 +103,73 @@ class SourceReader:
                 vaccines = VaccineCounts.model_validate(dict(vaccine_row))
         return WaveCounts.model_validate(dict(row) | {"vacinas": vaccines})
 
-    async def _paginate[K, M: BaseModel](
+    async def _organization_page(
+        self, scope: WaveScope, after: OrgKey | None, size: int
+    ) -> list[ShospCliente]:
+        params = (
+            scope.params()
+            | FULL_WAVE
+            | {"min_cliente": NO_KEY if after is None else after.prk + 1, "batch": size}
+        )
+        async with self._pool.readonly() as conn:
+            rows = await self._fetch(conn, "organizations", scope, params)
+        return [ShospCliente.model_validate(dict(row)) for row in rows]
+
+    async def _wave_clients(self, scope: WaveScope, after: int | None) -> AsyncIterator[int]:
+        last = None if after is None else OrgKey(after)
+        while True:
+            page = await self._organization_page(scope, last, CLIENT_LOOKAHEAD)
+            for cliente in page:
+                yield cliente.prk
+            if len(page) < CLIENT_LOOKAHEAD:
+                return
+            last = page[-1].key
+
+    async def _client_scoped[M: BaseModel](
         self,
         query: str,
-        entity: Entity,
-        scope: WaveScope,
-        after: K | None,
-        batch_size: int | None,
-        keyset: Callable[[K | None], Mapping[str, object]],
         model: type[M],
+        scope: WaveScope,
+        after: ClientScopedKey | None,
+        size: int,
     ) -> AsyncIterator[list[M]]:
-        size = batch_size or self._settings.batch_size_for(entity)
-        last = after
-        while True:
-            params = scope.params() | dict(keyset(last)) | {"batch": size}
-            async with self._pool.readonly() as conn:
-                rows = await self._fetch(conn, query, scope, params)
-            if not rows:
-                return
-            batch = [model.model_validate(dict(row)) for row in rows]
-            yield batch
-            if len(batch) < size:
-                return
-            last = batch[-1].key  # type: ignore[attr-defined]
+        """Lê um cliente por vez, para que a CTE da onda só avalie os grupos desse cliente.
+
+        Os lotes são completados com os clientes seguintes até atingir ``size``.
+        """
+        buffer: list[M] = []
+        clients: AsyncIterator[int]
+        if after is None:
+            clients = self._wave_clients(scope, None)
+            after_prk = NO_KEY
+        else:
+            clients = _prepend(after.cliente_id, self._wave_clients(scope, after.cliente_id))
+            after_prk = after.prk
+
+        async for cliente_id in clients:
+            while True:
+                wanted = size - len(buffer)
+                params = scope.params() | {
+                    "min_cliente": cliente_id,
+                    "max_cliente": cliente_id,
+                    "after_grupo": NO_KEY,
+                    "after_cliente": cliente_id,
+                    "after_prk": after_prk,
+                    "batch": wanted,
+                }
+                async with self._pool.readonly() as conn:
+                    rows = await self._fetch(conn, query, scope, params)
+                records = [model.model_validate(dict(row)) for row in rows]
+                buffer.extend(records)
+                if len(buffer) == size:
+                    yield buffer
+                    buffer = []
+                if len(records) < wanted:
+                    break
+                after_prk = records[-1].prk  # type: ignore[attr-defined]
+            after_prk = NO_KEY
+        if buffer:
+            yield buffer
 
     async def _items(
         self, conn: asyncpg.Connection, scope: WaveScope, grupo_ids: Sequence[int]
@@ -192,17 +227,7 @@ class SourceReader:
         return rows
 
 
-def _client_scoped_keyset(last: ClientScopedKey | None) -> dict[str, object]:
-    if last is None:
-        return {
-            "min_cliente": NO_KEY,
-            "after_cliente": NO_KEY,
-            "after_prk": NO_KEY,
-            "after_grupo": NO_KEY,
-        }
-    return {
-        "min_cliente": last.cliente_id,
-        "after_cliente": last.cliente_id,
-        "after_prk": last.prk,
-        "after_grupo": NO_KEY,
-    }
+async def _prepend(first: int, rest: AsyncIterator[int]) -> AsyncIterator[int]:
+    yield first
+    async for value in rest:
+        yield value

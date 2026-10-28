@@ -23,7 +23,14 @@ EXPECTED_QUERIES = {
     "counts_vaccines",
 }
 
-WAVE_PARAMS = {"wave_status", "wave_origin", "group_status", "min_cliente", "after_grupo"}
+WAVE_PARAMS = {
+    "wave_status",
+    "wave_origin",
+    "group_status",
+    "min_cliente",
+    "max_cliente",
+    "after_grupo",
+}
 
 
 def test_named_params_become_positional_and_reuse_numbers() -> None:

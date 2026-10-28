@@ -74,6 +74,15 @@ async def test_keyset_pages_have_no_gaps_or_duplicates(reader: SourceReader, ent
     assert keys == sorted(set(keys))
 
 
+async def test_client_scoped_batches_cross_clients_and_stay_full(reader: SourceReader) -> None:
+    pages = await _pages(reader.physicians(LEGADO_ATIVOS, batch_size=30), limit=4)
+
+    keys = [p.key for page in pages for p in page]
+    assert all(len(page) == 30 for page in pages[:-1])
+    assert len({key.cliente_id for key in keys}) > 1
+    assert keys == sorted(set(keys))
+
+
 async def test_resume_from_key_continues_after_it(reader: SourceReader) -> None:
     (first, second) = await _pages(reader.patients(LEGADO_ATIVOS, batch_size=10), limit=2)
 

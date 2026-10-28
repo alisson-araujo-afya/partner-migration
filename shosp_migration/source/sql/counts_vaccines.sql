@@ -1,5 +1,5 @@
 -- Cobertura do vinculo inferido das vacinas dos pacientes da onda
--- (DECISAO-status-cliente-e-vacinas, secoes 4.2 e 4.3). Chamar com min_cliente = after_grupo = -1.
+-- (DECISAO-status-cliente-e-vacinas, secoes 4.2 e 4.3). Chamar sem recorte de checkpoint.
 with {{wave_cte}},
 wave_vaccine as (
   select m.matches, m.grupo_id

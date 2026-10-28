@@ -76,7 +76,9 @@ class WaveScope:
 
 - `_wave_cte.sql` define `wave_cliente` e `wave_group`. É injetado pelo marcador `{{wave_cte}}`.
 - `wave_group` expõe `grupo_id`, `cliente_id`, `prestador_id`, `paciente_id`, `grupo_data` e `grupo_status`.
-- Parâmetros de recorte de keyset dentro da CTE: `:min_cliente` (em `wave_cliente`, `c.prk >= :min_cliente`) e `:after_grupo` (em `wave_group`, `pg.prk > :after_grupo`). Evitam recalcular a onda inteira em cada página.
+- Parâmetros de recorte de keyset dentro da CTE: `:min_cliente` e `:max_cliente` (em `wave_cliente`, `c.prk between ...`) e `:after_grupo` (em `wave_group`, `pg.prk > :after_grupo`). Evitam recalcular a onda inteira em cada página.
+- `organizations.sql` usa `exists` correlacionado sobre `wave_group`, que para no primeiro grupo elegível de cada cliente.
+- Physician e Patient são lidos **um cliente por vez** (`min_cliente = max_cliente`), com a lista de clientes vinda de `organizations.sql`. O reader completa cada lote com os clientes seguintes até o tamanho configurado.
 - Os parâmetros nomeados (`:nome`) viram `$n` do asyncpg. Comentários `--` são removidos antes da conversão.
 - A sessão usa `plan_cache_mode = force_custom_plan`, para que os `OR` por parâmetro sejam podados em cada execução.
 
@@ -136,6 +138,15 @@ class SourceReader:
 
 ## 11. Riscos e pendências
 
-- Tempo por página de Physician e Patient: medido em dev e registrado no PR.
+- Tempo medido em dev, onda `legado-inativos`, grupos ativos, lotes 100/200/500/500:
+
+  | Entidade | Registros | Páginas | Total | Pior página |
+  | --- | --- | --- | --- | --- |
+  | Organization | 398 | 4 | 2,4 s | 1,2 s |
+  | Physician | 784 | 4 | 7,1 s | 3,5 s |
+  | Patient | 37.784 | 76 | 19,8 s | 1,4 s |
+  | Prescription (com itens) | 73.649 | 148 | 16,6 s | 1,9 s |
+
+  Os totais batem com o `count`. Com a CTE completa em cada página, Organization, Physician e Patient levavam cerca de 18 s por página (cerca de 23 min só para Patient).
 - O vínculo inferido das vacinas depende da aprovação do produto. A flag vem desligada.
 - Os números de dev não valem para a base real (PRD-00, D-03).

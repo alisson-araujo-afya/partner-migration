@@ -1,12 +1,12 @@
 -- CTE compartilhada por todas as queries de onda (PRD-00, secao 6.5.3).
 -- Status do cliente: '1' ativo, '0' inativo (DECISAO-status-cliente-e-vacinas, secao 4.1).
--- :min_cliente e :after_grupo recortam a onda pelo checkpoint; use -1 para a onda inteira.
+-- :min_cliente, :max_cliente e :after_grupo recortam a onda pelo checkpoint.
 wave_cliente as (
   select c.prk
   from cliente."Cliente" c
   where ((:wave_status = 'inativo' and c.status = '0' and c."dataInativacao" is not null)
       or (:wave_status = 'ativo' and c.status = '1'))
-    and c.prk >= :min_cliente
+    and c.prk between :min_cliente and :max_cliente
 ),
 wave_group as (
   select pg.prk            as grupo_id,

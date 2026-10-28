@@ -1,4 +1,4 @@
--- PRD-00, secao 6.5.4: volume da onda antes da carga. Chamar com min_cliente = after_grupo = -1.
+-- PRD-00, secao 6.5.4: volume da onda antes da carga. Chamar sem recorte de checkpoint.
 with {{wave_cte}}
 select (select count(distinct cliente_id) from wave_group)   as total_contas,
        (select count(distinct (cliente_id, prestador_id)) from wave_group) as total_medicos,
