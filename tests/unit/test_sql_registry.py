@@ -87,6 +87,14 @@ def test_wave_queries_receive_wave_params(name: str) -> None:
     assert set(default_registry().get(name).param_names) >= WAVE_PARAMS
 
 
+@pytest.mark.parametrize("name", ["physicians", "patients"])
+def test_client_scoped_queries_fetch_the_client_without_limit(name: str) -> None:
+    query = default_registry().get(name)
+
+    assert "limit" not in query.text.lower()
+    assert "batch" not in query.param_names
+
+
 def test_client_status_uses_real_columns() -> None:
     text = default_registry().get("counts").text
 

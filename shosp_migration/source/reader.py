@@ -5,7 +5,7 @@ from typing import Any
 
 import asyncpg
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from shosp_migration.config import Entity, Settings
 from shosp_migration.source.connection import SourcePool
@@ -33,6 +33,13 @@ CLIENT_LOOKAHEAD = 100
 FULL_WAVE = {"min_cliente": NO_KEY, "max_cliente": MAX_KEY, "after_grupo": NO_KEY}
 
 log = structlog.get_logger(__name__)
+
+
+class SourceRowError(ValueError):
+    def __init__(self, query: str, fields: tuple[str, ...]) -> None:
+        self.query = query
+        self.fields = fields
+        super().__init__("linha inválida na origem")
 
 
 class SourceReader:
@@ -82,7 +89,9 @@ class SourceReader:
             )
             async with self._pool.readonly() as conn:
                 rows = await self._fetch(conn, "prescription_groups", scope, params)
-                groups = [ShospProntuarioGrupo.model_validate(dict(row)) for row in rows]
+                groups = [
+                    self._parse(ShospProntuarioGrupo, row, "prescription_groups") for row in rows
+                ]
                 items = await self._items(conn, scope, [g.grupo_id for g in groups])
             if not groups:
                 return
@@ -100,8 +109,8 @@ class SourceReader:
             vaccines = None
             if scope.reads_vaccines:
                 (vaccine_row,) = await self._fetch(conn, "counts_vaccines", scope, params)
-                vaccines = VaccineCounts.model_validate(dict(vaccine_row))
-        return WaveCounts.model_validate(dict(row) | {"vacinas": vaccines})
+                vaccines = self._parse(VaccineCounts, vaccine_row, "counts_vaccines")
+        return self._parse(WaveCounts, dict(row) | {"vacinas": vaccines}, "counts")
 
     async def _organization_page(
         self, scope: WaveScope, after: OrgKey | None, size: int
@@ -113,7 +122,7 @@ class SourceReader:
         )
         async with self._pool.readonly() as conn:
             rows = await self._fetch(conn, "organizations", scope, params)
-        return [ShospCliente.model_validate(dict(row)) for row in rows]
+        return [self._parse(ShospCliente, row, "organizations") for row in rows]
 
     async def _wave_clients(self, scope: WaveScope, after: int | None) -> AsyncIterator[int]:
         last = None if after is None else OrgKey(after)
@@ -135,7 +144,7 @@ class SourceReader:
     ) -> AsyncIterator[list[M]]:
         """Lê um cliente por vez, para que a CTE da onda só avalie os grupos desse cliente.
 
-        Os lotes são completados com os clientes seguintes até atingir ``size``.
+        Uma query traz todos os registros restantes do cliente; o lote é fatiado em memória.
         """
         buffer: list[M] = []
         clients: AsyncIterator[int]
@@ -147,26 +156,19 @@ class SourceReader:
             after_prk = after.prk
 
         async for cliente_id in clients:
-            while True:
-                wanted = size - len(buffer)
-                params = scope.params() | {
-                    "min_cliente": cliente_id,
-                    "max_cliente": cliente_id,
-                    "after_grupo": NO_KEY,
-                    "after_cliente": cliente_id,
-                    "after_prk": after_prk,
-                    "batch": wanted,
-                }
-                async with self._pool.readonly() as conn:
-                    rows = await self._fetch(conn, query, scope, params)
-                records = [model.model_validate(dict(row)) for row in rows]
-                buffer.extend(records)
-                if len(buffer) == size:
-                    yield buffer
-                    buffer = []
-                if len(records) < wanted:
-                    break
-                after_prk = records[-1].prk  # type: ignore[attr-defined]
+            params = scope.params() | {
+                "min_cliente": cliente_id,
+                "max_cliente": cliente_id,
+                "after_grupo": NO_KEY,
+                "after_cliente": cliente_id,
+                "after_prk": after_prk,
+            }
+            async with self._pool.readonly() as conn:
+                rows = await self._fetch(conn, query, scope, params)
+            buffer.extend(self._parse(model, row, query) for row in rows)
+            while len(buffer) >= size:
+                yield buffer[:size]
+                buffer = buffer[size:]
             after_prk = NO_KEY
         if buffer:
             yield buffer
@@ -194,7 +196,7 @@ class SourceReader:
 
         for query, field, model in sources:
             for row in await self._fetch(conn, query, scope, params):
-                item = model.model_validate(dict(row))
+                item = self._parse(model, row, query)
                 by_group[field][item.grupo_id].append(item)
 
         for grupo_id in grupo_ids:
@@ -214,7 +216,17 @@ class SourceReader:
     ) -> list[asyncpg.Record]:
         query = self._registry.get(name)
         started = time.perf_counter()
-        rows = await conn.fetch(query.text, *query.args(params))
+        try:
+            rows = await conn.fetch(query.text, *query.args(params))
+        except asyncpg.PostgresError as exc:
+            log.error(
+                "source.query.failed",
+                query=name,
+                wave=scope.wave.value,
+                group_status=scope.group_status.value,
+                sqlstate=exc.sqlstate,
+            )
+            raise
         log.info(
             "source.query",
             query=name,
@@ -225,6 +237,15 @@ class SourceReader:
             duration_ms=round((time.perf_counter() - started) * 1000),
         )
         return rows
+
+    def _parse[M: BaseModel](self, model: type[M], row: object, query: str) -> M:
+        payload = row if isinstance(row, dict) else dict(row)  # type: ignore[arg-type]
+        try:
+            return model.model_validate(payload)
+        except ValidationError as exc:
+            fields = tuple(".".join(str(part) for part in error["loc"]) for error in exc.errors())
+            log.error("source.row.invalid", query=query, fields=list(fields))
+            raise SourceRowError(query, fields) from None
 
 
 async def _prepend(first: int, rest: AsyncIterator[int]) -> AsyncIterator[int]:

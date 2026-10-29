@@ -1,5 +1,5 @@
 -- PRD-02, secao 3.2. Keyset por (cliente_id, prk), lido um cliente por vez
--- (min_cliente = max_cliente = after_cliente).
+-- (min_cliente = max_cliente = after_cliente). Sem LIMIT: o reader fatia o lote.
 with {{wave_cte}},
 wave_physician as (
   select distinct cliente_id, prestador_id from wave_group
@@ -21,4 +21,3 @@ left join shosp."ConselhoProfissional" cp on cp.prk = pt."frkConselhoProfissiona
 left join shosp."Estado" uf_conselho      on uf_conselho.prk = pt."frkUfConselhoProfissional"
 where (wp.cliente_id, pt.prk) > (:after_cliente, :after_prk)
 order by wp.cliente_id, pt.prk
-limit :batch

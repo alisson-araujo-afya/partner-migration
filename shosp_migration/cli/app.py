@@ -13,7 +13,7 @@ from shosp_migration.config import Entity, Settings
 from shosp_migration.logging import configure_logging
 from shosp_migration.source.connection import SourcePool
 from shosp_migration.source.models import ShospGroupWithItems
-from shosp_migration.source.reader import SourceReader
+from shosp_migration.source.reader import SourceReader, SourceRowError
 from shosp_migration.source.waves import GroupStatus, Wave, WaveOrigin, WaveScope
 
 _READER_METHOD = {
@@ -76,7 +76,7 @@ def _scope(
 def _run(coroutine: Coroutine[Any, Any, None]) -> None:
     try:
         asyncio.run(coroutine)
-    except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
+    except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError, SourceRowError) as exc:
         raise _fail(f"falha ao acessar a SHOSP: {type(exc).__name__}") from None
 
 

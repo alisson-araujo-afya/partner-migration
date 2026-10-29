@@ -78,15 +78,15 @@ class WaveScope:
 - `wave_group` expõe `grupo_id`, `cliente_id`, `prestador_id`, `paciente_id`, `grupo_data` e `grupo_status`.
 - Parâmetros de recorte de keyset dentro da CTE: `:min_cliente` e `:max_cliente` (em `wave_cliente`, `c.prk between ...`) e `:after_grupo` (em `wave_group`, `pg.prk > :after_grupo`). Evitam recalcular a onda inteira em cada página.
 - `organizations.sql` usa `exists` correlacionado sobre `wave_group`, que para no primeiro grupo elegível de cada cliente.
-- Physician e Patient são lidos **um cliente por vez** (`min_cliente = max_cliente`), com a lista de clientes vinda de `organizations.sql`. O reader completa cada lote com os clientes seguintes até o tamanho configurado.
+- Physician e Patient são lidos **um cliente por vez** (`min_cliente = max_cliente`), com a lista de clientes vinda de `organizations.sql`. Uma query traz todos os registros restantes do cliente (`prk > after_prk`); o reader fatia o lote em memória.
 - Os parâmetros nomeados (`:nome`) viram `$n` do asyncpg. Comentários `--` são removidos antes da conversão.
 - A sessão usa `plan_cache_mode = force_custom_plan`, para que os `OR` por parâmetro sejam podados em cada execução.
 
 | Arquivo | Chave keyset | Parâmetros próprios |
 | --- | --- | --- |
 | `organizations.sql` | `prk` | `:batch` |
-| `physicians.sql` | (`cliente_id`, `prk`) | `:after_cliente`, `:after_prk`, `:batch` |
-| `patients.sql` | (`cliente_id`, `prk`) | `:after_cliente`, `:after_prk`, `:batch` |
+| `physicians.sql` | (`cliente_id`, `prk`) | `:after_cliente`, `:after_prk` |
+| `patients.sql` | (`cliente_id`, `prk`) | `:after_cliente`, `:after_prk` |
 | `prescription_groups.sql` | `grupo_id` | `:batch` |
 | `prescription_items_legacy.sql`, `_exam.sql`, `_memed.sql` | — | `:grupo_ids` |
 | `prescription_items_vaccine.sql` | — | `:grupo_ids` |

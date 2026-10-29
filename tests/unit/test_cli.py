@@ -15,6 +15,7 @@ from shosp_migration.source.models import (
     ShospProntuarioGrupo,
     WaveCounts,
 )
+from shosp_migration.source.reader import SourceRowError
 from shosp_migration.source.waves import WaveScope
 
 PII = "Fulano de Tal"
@@ -171,3 +172,17 @@ def test_connection_failure_exits_1_without_dsn(monkeypatch: pytest.MonkeyPatch)
     assert result.exit_code == 1
     assert "falha ao acessar a SHOSP" in result.output
     assert "topsecret" not in result.output
+
+
+def test_invalid_source_row_exits_1_without_row(fake_reader: FakeReader) -> None:
+    async def boom(_scope: WaveScope) -> WaveCounts:
+        raise SourceRowError("organizations", ("cpf",))
+
+    fake_reader.count = boom  # type: ignore[method-assign]
+
+    result = runner.invoke(cli.app, ["count", "--wave", "legado-ativos", "--group-status", "ativo"])
+
+    assert result.exit_code == 1
+    assert "falha ao acessar a SHOSP: SourceRowError" in result.output
+    assert "cpf" not in result.output
+    assert "ValidationError" not in result.output
