@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum, StrEnum
 
 
 class WaveOrigin(StrEnum):
@@ -18,19 +18,29 @@ class GroupStatus(StrEnum):
     TODOS = "todos"
 
 
-class Wave(StrEnum):
-    LEGADO_INATIVOS = "legado-inativos"
-    LEGADO_ATIVOS = "legado-ativos"
-    MEMED_INATIVOS = "memed-inativos"
-    MEMED_ATIVOS = "memed-ativos"
+class Wave(str, Enum):
+    LEGADO_INATIVOS = "legado-inativos", WaveOrigin.LEGADO, ClientStatus.INATIVO
+    LEGADO_ATIVOS = "legado-ativos", WaveOrigin.LEGADO, ClientStatus.ATIVO
+    MEMED_INATIVOS = "memed-inativos", WaveOrigin.MEMED, ClientStatus.INATIVO
+    MEMED_ATIVOS = "memed-ativos", WaveOrigin.MEMED, ClientStatus.ATIVO
+
+    _origin: WaveOrigin
+    _client_status: ClientStatus
+
+    def __new__(cls, slug: str, origin: WaveOrigin, status: ClientStatus) -> "Wave":
+        obj = str.__new__(cls, slug)
+        obj._value_ = slug
+        obj._origin = origin
+        obj._client_status = status
+        return obj
 
     @property
     def client_status(self) -> ClientStatus:
-        return ClientStatus(self.value.split("-")[1].removesuffix("s"))
+        return self._client_status
 
     @property
     def origin(self) -> WaveOrigin:
-        return WaveOrigin(self.value.split("-")[0])
+        return self._origin
 
 
 @dataclass(frozen=True)
