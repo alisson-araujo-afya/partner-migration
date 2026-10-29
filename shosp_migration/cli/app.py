@@ -39,6 +39,8 @@ VaccinesOption = Annotated[
 ]
 
 
+
+
 def load_settings() -> Settings:
     return Settings()  # type: ignore[call-arg]
 
